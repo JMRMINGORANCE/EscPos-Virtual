@@ -14,6 +14,9 @@ Cada push a `main` compila el APK con GitHub Actions y lo publica en **[Releases
    Si tu app corre en el mismo móvil, usa `127.0.0.1:9100`.
 3. Cada **corte de papel** (GS V, ESC i/m), cierre de conexión o 1,2 s sin datos genera un ticket nuevo.
 
+La pantalla solo muestra los tickets, en vertical. **Mantén pulsado un ticket** para ver sus comandos,
+el volcado hex, compartirlo o abrir el resto de opciones (dirección, ajustes, simular estado, ticket de prueba…).
+
 En cada ticket puedes ver la **lista de comandos interpretados**, el **volcado hex** y compartirlo como PNG, `.bin` o `.txt`.
 También puedes abrir archivos `.bin`/`.prn` capturados.
 

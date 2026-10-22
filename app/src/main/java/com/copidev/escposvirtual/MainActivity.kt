@@ -11,7 +11,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,7 +41,6 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.copidev.escposvirtual.core.CodePage
@@ -54,6 +52,10 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
+/**
+ * Pantalla única: solo muestra los tickets. Todas las opciones están en el menú que aparece
+ * al mantener pulsada la pantalla.
+ */
 class MainActivity : Activity(), PrinterHub.Listener {
     private val main = Handler(Looper.getMainLooper())
     private val renderPool = Executors.newSingleThreadExecutor()
@@ -62,16 +64,13 @@ class MainActivity : Activity(), PrinterHub.Listener {
     }
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-    private lateinit var serverSwitch: Switch
-    private lateinit var statusText: TextView
-    private lateinit var addressText: TextView
-    private lateinit var otherText: TextView
+    private var crashMode = false
     private lateinit var list: ListView
     private lateinit var emptyView: TextView
     private val adapter = TicketAdapter()
     private val refresher = object : Runnable {
         override fun run() {
-            updateServerViews()
+            updateEmptyView()
             main.postDelayed(this, 4000)
         }
     }
@@ -92,42 +91,7 @@ class MainActivity : Activity(), PrinterHub.Listener {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        if (PrinterHub.prefs.autoStart && !PrinterHub.isRunning) PrinterService.start(this)
-    }
-
-    private var crashMode = false
-
-    /** Pantalla mínima (sin nada que pueda volver a fallar) con el error del último cierre. */
-    private fun showCrash(text: String) {
-        crashMode = true
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(48), dp(16), dp(16))
-        }
-        box.addView(tv("La app se cerró inesperadamente. Copia este error y envíaselo a quien te la hizo:", 15f, INK, true))
-        val buttons = LinearLayout(this)
-        buttons.addView(Button(this).apply {
-            this.text = "Copiar error"
-            setOnClickListener {
-                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("error", text))
-                Toast.makeText(this@MainActivity, "Copiado", Toast.LENGTH_SHORT).show()
-            }
-        })
-        buttons.addView(Button(this).apply {
-            this.text = "Continuar"
-            setOnClickListener {
-                App.crashFile(this@MainActivity).delete()
-                recreate()
-            }
-        })
-        box.addView(buttons)
-        box.addView(TextView(this).apply {
-            this.text = text
-            typeface = Typeface.MONOSPACE
-            textSize = 11f
-            setTextIsSelectable(true)
-        })
-        setContentView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(box) }) })
+        if (PrinterHub.prefs.autoStart && !PrinterHub.isRunning) startServer()
     }
 
     override fun onStart() {
@@ -139,9 +103,10 @@ class MainActivity : Activity(), PrinterHub.Listener {
     }
 
     override fun onStop() {
-        if (crashMode) { super.onStop(); return }
-        PrinterHub.listeners.remove(this)
-        main.removeCallbacks(refresher)
+        if (!crashMode) {
+            PrinterHub.listeners.remove(this)
+            main.removeCallbacks(refresher)
+        }
         super.onStop()
     }
 
@@ -155,7 +120,7 @@ class MainActivity : Activity(), PrinterHub.Listener {
         if (PrinterHub.tickets.isNotEmpty()) list.setSelection(0)
     }
 
-    override fun onServerChanged() = updateServerViews()
+    override fun onServerChanged() = updateEmptyView()
 
     override fun onEvent(message: String) {
         Toast.makeText(this, "🔔 $message", Toast.LENGTH_SHORT).show()
@@ -165,6 +130,14 @@ class MainActivity : Activity(), PrinterHub.Listener {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_OPEN && resultCode == RESULT_OK) data?.data?.let { openFile(it) }
+    }
+
+    private fun startServer() {
+        try {
+            PrinterService.start(this)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No se pudo iniciar el servidor: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     // ------------------------------------------------------------------ interfaz
@@ -178,169 +151,175 @@ class MainActivity : Activity(), PrinterHub.Listener {
         if (bold) typeface = Typeface.DEFAULT_BOLD
     }
 
-    private fun flatButton(text: String, color: Int = ACCENT, onClick: () -> Unit) =
-        Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            this.text = text
-            setTextColor(color)
-            isAllCaps = false
-            textSize = 14f
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(12), 0, dp(12), 0)
-            setOnClickListener { onClick() }
-        }
-
     private fun buildUi(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG)
-        }
-
-        // Cabecera
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(HEADER)
-            setPadding(dp(16), dp(12), dp(16), dp(14))
-        }
-        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        titleRow.addView(tv(getString(R.string.app_name), 18f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
-        serverSwitch = Switch(this).apply {
-            setOnCheckedChangeListener { _, on ->
-                if (on == PrinterHub.isRunning) return@setOnCheckedChangeListener
-                PrinterHub.prefs.autoStart = on
-                if (on) PrinterService.start(this@MainActivity) else PrinterService.stop(this@MainActivity)
-            }
-        }
-        titleRow.addView(serverSwitch)
-        header.addView(titleRow)
-        statusText = tv("", 13f, 0xFFB0BEC5.toInt())
-        header.addView(statusText)
-        addressText = tv("", 26f, Color.WHITE, true).apply {
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            setTextIsSelectable(true)
-            setPadding(0, dp(4), 0, dp(2))
-        }
-        header.addView(addressText)
-        otherText = tv("", 12f, 0xFF90A4AE.toInt())
-        header.addView(otherText)
-        root.addView(header)
-
-        // Barra de acciones
-        val actions = LinearLayout(this).apply {
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(4), 0, dp(4), 0)
-        }
-        actions.addView(flatButton("Ticket de prueba") { PrinterHub.feed(SampleTicket.bytes(PrinterHub.prefs.printerConfig().paperDots), "prueba") })
-        actions.addView(flatButton("Abrir .bin") { pickFile() })
-        actions.addView(flatButton("Ajustes") { showSettings() })
-        actions.addView(flatButton("Borrar") { cache.evictAll(); PrinterHub.clear() })
-        root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(actions) })
-
-        // Simulación de estado
-        val sim = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), 0, dp(12), dp(4))
-            setBackgroundColor(Color.WHITE)
-        }
-        sim.addView(tv("Simular:", 13f, MUTED))
-        val st = PrinterHub.status
-        fun simBox(label: String, get: () -> Boolean, set: (Boolean) -> Unit) = CheckBox(this).apply {
-            text = label
-            textSize = 13f
-            isChecked = get()
-            setOnCheckedChangeListener { _, v -> set(v); PrinterHub.statusChanged() }
-        }
-        sim.addView(simBox("Sin papel", { st.paperOut }) { st.paperOut = it })
-        sim.addView(simBox("Poco papel", { st.paperNearEnd }) { st.paperNearEnd = it })
-        sim.addView(simBox("Tapa abierta", { st.coverOpen }) { st.coverOpen = it })
-        sim.addView(simBox("Cajón abierto", { st.drawerOpen }) { st.drawerOpen = it })
-        sim.addView(simBox("Offline", { st.offline }) { st.offline = it })
-        root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(sim) })
-        root.addView(View(this).apply { setBackgroundColor(0xFFDDDDDD.toInt()) }, LinearLayout.LayoutParams(-1, 1))
-
-        // Lista de tickets
-        val listFrame = FrameLayout(this)
+        val root = FrameLayout(this).apply { setBackgroundColor(BG) }
         list = ListView(this).apply {
             divider = null
             adapter = this@MainActivity.adapter
             clipToPadding = false
-            setPadding(0, dp(4), 0, dp(24))
+            setPadding(0, dp(8), 0, dp(24))
+            isLongClickable = true
+            setOnItemLongClickListener { _, _, position, _ ->
+                ticketMenu(PrinterHub.tickets[position]); true
+            }
         }
         emptyView = tv("", 15f, MUTED).apply {
             gravity = Gravity.CENTER
             setPadding(dp(32), dp(32), dp(32), dp(32))
             setLineSpacing(0f, 1.3f)
+            setOnLongClickListener { mainMenu(); true }
+            setOnClickListener { mainMenu() }
         }
-        listFrame.addView(list, FrameLayout.LayoutParams(-1, -1))
-        listFrame.addView(emptyView, FrameLayout.LayoutParams(-1, -1))
+        root.addView(list, FrameLayout.LayoutParams(-1, -1))
+        root.addView(emptyView, FrameLayout.LayoutParams(-1, -1))
         list.emptyView = emptyView
-        root.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        rootView = root
-        headerView = header
-        updateServerViews()
+        updateEmptyView()
         return root
     }
 
-    private lateinit var rootView: LinearLayout
-    private lateinit var headerView: LinearLayout
-
-    /** Se llama después de setContentView: antes no existe la DecorView y getInsetsController() falla. */
+    /** Debe llamarse después de setContentView (antes no existe la DecorView). */
     private fun setupSystemBars() {
-        val root = rootView
-        val header = headerView
-        // Bordes de pantalla (Android 15 obliga a dibujar bajo las barras del sistema)
         if (Build.VERSION.SDK_INT >= 30) {
-            window.setDecorFitsSystemWindows(false)
-            window.insetsController?.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
             window.insetsController?.setSystemBarsAppearance(
-                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS, WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
             )
-            root.setOnApplyWindowInsetsListener { _, insets ->
-                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                header.setPadding(dp(16) + i.left, dp(12) + i.top, dp(16) + i.right, dp(14))
-                root.setPadding(0, 0, 0, i.bottom)
-                insets
-            }
         } else {
             @Suppress("DEPRECATION")
-            window.statusBarColor = HEADER
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
+        @Suppress("DEPRECATION")
+        window.statusBarColor = BG
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = BG
+        if (Build.VERSION.SDK_INT >= 35) {
+            // Android 15+ dibuja siempre bajo las barras del sistema: dejamos hueco.
+            val content = findViewById<View>(android.R.id.content)
+            content.setOnApplyWindowInsetsListener { v, insets ->
+                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                v.setPadding(i.left, i.top, i.right, i.bottom)
+                insets
+            }
         }
     }
 
-    private fun updateServerViews() {
-        val server = PrinterHub.server
+    private fun updateEmptyView() {
+        if (!::emptyView.isInitialized) return
         val port = PrinterHub.prefs.port
-        val running = PrinterHub.isRunning
-        serverSwitch.isChecked = running
-        val addrs = PrinterHub.addresses()
-        val conns = server?.clients?.size ?: 0
-        statusText.text = when {
-            running -> "● Escuchando" + if (conns > 0) " · $conns conexión" + (if (conns > 1) "es" else "") + " abierta" + (if (conns > 1) "s" else "") else ""
-            server?.error != null -> "✕ No se pudo abrir el puerto $port: ${server.error}"
-            else -> "○ Detenida"
+        val server = PrinterHub.server
+        val ip = PrinterHub.addresses().firstOrNull()?.second ?: "127.0.0.1"
+        emptyView.text = when {
+            PrinterHub.isRunning -> "Esperando tickets en\n\n$ip:$port\n\nMantén pulsada la pantalla para ver las opciones."
+            server?.error != null -> "No se pudo abrir el puerto $port:\n${server.error}\n\nToca para ver las opciones."
+            else -> "La impresora está detenida.\n\nToca para ver las opciones."
         }
-        statusText.setTextColor(
-            when {
-                running -> 0xFF69F0AE.toInt()
-                server?.error != null -> 0xFFFF8A80.toInt()
-                else -> 0xFFB0BEC5.toInt()
-            }
-        )
-        val main = addrs.firstOrNull()
-        addressText.text = if (main != null) "${main.second}:$port" else "Sin red · 127.0.0.1:$port"
-        addressText.alpha = if (running) 1f else 0.5f
-        val rest = addrs.drop(1).joinToString("  ·  ") { "${it.first} ${it.second}" }
-        otherText.text = (if (rest.isNotEmpty()) "$rest\n" else "") +
-            "Desde este mismo móvil: 127.0.0.1:$port · Papel ${if (PrinterHub.prefs.paper80) "80" else "58"} mm"
-        emptyView.text = if (running)
-            "Configura tu app para imprimir en una impresora de red (RAW / ESC/POS) con:\n\n${addressText.text}\n\nCada corte de papel o cierre de conexión crea un ticket nuevo."
-        else "La impresora está detenida. Actívala con el interruptor de arriba."
     }
 
     private fun applyScreenOn() {
         if (PrinterHub.prefs.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    // ------------------------------------------------------------------ menús
+
+    private fun ticketMenu(t: Ticket) {
+        val cut = when (t.cut) { 2 -> "corte total"; 1 -> "corte parcial"; else -> "sin corte" }
+        val title = "Ticket #${t.id} · ${timeFmt.format(Date(t.createdAt))}\n" +
+            "${t.source} · ${String.format(Locale.getDefault(), "%,d", t.raw.size())} bytes · $cut"
+        val items = arrayOf("Comandos recibidos", "Volcado hex", "Compartir…", "Más opciones…")
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showText("Comandos · ticket #${t.id}", if (t.log.isEmpty()) "(sin comandos)" else t.log.joinToString("\n"))
+                    1 -> showText("Hex · ticket #${t.id}", t.hexDump(64 * 1024))
+                    2 -> share(t)
+                    else -> mainMenu()
+                }
+            }
+            .show()
+    }
+
+    private fun mainMenu() {
+        val running = PrinterHub.isRunning
+        val port = PrinterHub.prefs.port
+        val addrs = PrinterHub.addresses()
+        val ip = addrs.firstOrNull()?.second ?: "sin red"
+        val conns = PrinterHub.server?.clients?.size ?: 0
+        val title = if (running) "Escuchando en $ip:$port" + (if (conns > 0) " · $conns conexión(es)" else "") else "Impresora detenida"
+        val items = arrayOf(
+            "Dirección y estado",
+            "Ticket de prueba",
+            "Simular estado de la impresora…",
+            "Abrir archivo .bin / .prn",
+            "Ajustes",
+            "Borrar todos los tickets",
+            if (running) "Detener impresora" else "Iniciar impresora",
+        )
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showInfo()
+                    1 -> PrinterHub.feed(SampleTicket.bytes(PrinterHub.prefs.printerConfig().paperDots), "prueba")
+                    2 -> simulateDialog()
+                    3 -> pickFile()
+                    4 -> showSettings()
+                    5 -> { cache.evictAll(); PrinterHub.clear() }
+                    6 -> {
+                        PrinterHub.prefs.autoStart = !running
+                        if (running) PrinterService.stop(this) else startServer()
+                        main.postDelayed({ updateEmptyView() }, 500)
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showInfo() {
+        val port = PrinterHub.prefs.port
+        val server = PrinterHub.server
+        val sb = StringBuilder()
+        sb.append(
+            when {
+                PrinterHub.isRunning -> "● Escuchando"
+                server?.error != null -> "✕ Error: ${server.error}"
+                else -> "○ Detenida"
+            }
+        ).append("\n\n")
+        val addrs = PrinterHub.addresses()
+        if (addrs.isEmpty()) sb.append("Sin red\n")
+        for ((name, ip) in addrs) sb.append("$ip:$port   ($name)\n")
+        sb.append("127.0.0.1:$port   (desde este mismo móvil)\n\n")
+        sb.append("Conexiones abiertas: ${server?.clients?.size ?: 0}\n")
+        sb.append("Papel: ${if (PrinterHub.prefs.paper80) "80 mm · 48 columnas" else "58 mm · 32 columnas"}\n")
+        sb.append("Página de códigos inicial: ${CodePage.byId(PrinterHub.prefs.codePage).name}\n")
+        sb.append("Tickets en memoria: ${PrinterHub.tickets.size}")
+        AlertDialog.Builder(this)
+            .setTitle("Dirección y estado")
+            .setMessage(sb.toString())
+            .setPositiveButton("Cerrar", null)
+            .show()
+    }
+
+    private fun simulateDialog() {
+        val st = PrinterHub.status
+        val labels = arrayOf("Sin papel", "Poco papel", "Tapa abierta", "Cajón abierto", "Offline")
+        val checked = booleanArrayOf(st.paperOut, st.paperNearEnd, st.coverOpen, st.drawerOpen, st.offline)
+        AlertDialog.Builder(this)
+            .setTitle("Simular estado")
+            .setMultiChoiceItems(labels, checked) { _, which, on ->
+                when (which) {
+                    0 -> st.paperOut = on
+                    1 -> st.paperNearEnd = on
+                    2 -> st.coverOpen = on
+                    3 -> st.drawerOpen = on
+                    4 -> st.offline = on
+                }
+                PrinterHub.statusChanged()
+            }
+            .setPositiveButton("Hecho", null)
+            .show()
     }
 
     // ------------------------------------------------------------------ ajustes
@@ -395,7 +374,7 @@ class MainActivity : Activity(), PrinterHub.Listener {
                 p.keepScreenOn = screen.isChecked
                 applyScreenOn()
                 PrinterHub.applySettings()
-                updateServerViews()
+                updateEmptyView()
             }
             .show()
     }
@@ -473,17 +452,42 @@ class MainActivity : Activity(), PrinterHub.Listener {
             .show()
     }
 
-    // ------------------------------------------------------------------ lista
+    /** Pantalla mínima (sin nada que pueda volver a fallar) con el error del último cierre. */
+    private fun showCrash(text: String) {
+        crashMode = true
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(48), dp(16), dp(16))
+        }
+        box.addView(tv("La app se cerró inesperadamente. Copia este error y envíaselo a quien te la hizo:", 15f, INK, true))
+        val buttons = LinearLayout(this)
+        buttons.addView(Button(this).apply {
+            this.text = "Copiar error"
+            setOnClickListener {
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("error", text))
+                Toast.makeText(this@MainActivity, "Copiado", Toast.LENGTH_SHORT).show()
+            }
+        })
+        buttons.addView(Button(this).apply {
+            this.text = "Continuar"
+            setOnClickListener {
+                App.crashFile(this@MainActivity).delete()
+                recreate()
+            }
+        })
+        box.addView(buttons)
+        box.addView(TextView(this).apply {
+            this.text = text
+            typeface = Typeface.MONOSPACE
+            textSize = 11f
+            setTextIsSelectable(true)
+        })
+        setContentView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(box) }) })
+    }
 
-    private class Holder(
-        val title: TextView,
-        val subtitle: TextView,
-        val image: TicketImageView,
-        val events: TextView,
-        val log: Button,
-        val hex: Button,
-        val share: Button,
-    ) {
+    // ------------------------------------------------------------------ lista: solo los tickets
+
+    private class Holder(val image: TicketImageView) {
         var id = -1
     }
 
@@ -498,32 +502,27 @@ class MainActivity : Activity(), PrinterHub.Listener {
             val h = view.tag as Holder
             val t = getItem(position)
             h.id = t.id
-            h.title.text = "Ticket #${t.id} · ${timeFmt.format(Date(t.createdAt))}"
-            val cut = when (t.cut) { 2 -> "corte total"; 1 -> "corte parcial"; else -> "sin corte" }
-            h.subtitle.text = "${t.source} · ${String.format(Locale.getDefault(), "%,d", t.raw.size())} bytes · $cut · ${if (t.paperDots >= 576) "80" else "58"} mm"
-            h.events.visibility = if (t.events.isEmpty()) View.GONE else View.VISIBLE
-            h.events.text = t.events.joinToString("\n") { "🔔 $it" }
-            h.log.setOnClickListener { showText("Comandos · ticket #${t.id}", if (t.log.isEmpty()) "(sin comandos)" else t.log.joinToString("\n")) }
-            h.hex.setOnClickListener { showText("Hex · ticket #${t.id}", t.hexDump(64 * 1024)) }
-            h.share.setOnClickListener { share(t) }
-            h.image.ratio = (t.height + TicketRenderer.MARGIN * 2 + 28).toFloat() / (t.paperDots + TicketRenderer.MARGIN * 2)
             h.image.paperDots = t.paperDots
             val bmp = cache.get(t.id)
             if (bmp != null) {
-                h.image.setImageBitmap(bmp)
                 h.image.ratio = bmp.height.toFloat() / bmp.width
+                h.image.setImageBitmap(bmp)
             } else {
+                h.image.ratio = (t.height + TicketRenderer.MARGIN * 2 + 28).toFloat() / (t.paperDots + TicketRenderer.MARGIN * 2)
                 h.image.setImageDrawable(null)
-                renderPool.execute {
-                    val b = try { TicketRenderer.render(t) } catch (e: Throwable) { null } ?: return@execute
-                    main.post {
-                        cache.put(t.id, b)
-                        if (h.id == t.id) {
-                            h.image.ratio = b.height.toFloat() / b.width
-                            h.image.setImageBitmap(b)
-                            h.image.requestLayout()
+                try {
+                    renderPool.execute {
+                        val b = try { TicketRenderer.render(t) } catch (e: Throwable) { null } ?: return@execute
+                        main.post {
+                            cache.put(t.id, b)
+                            if (h.id == t.id) {
+                                h.image.ratio = b.height.toFloat() / b.width
+                                h.image.setImageBitmap(b)
+                                h.image.requestLayout()
+                            }
                         }
                     }
+                } catch (_: Exception) {
                 }
             }
             h.image.requestLayout()
@@ -531,59 +530,38 @@ class MainActivity : Activity(), PrinterHub.Listener {
         }
 
         private fun createItem(): View {
-            val item = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), dp(10), dp(12), dp(6))
+            val frame = FrameLayout(this@MainActivity).apply {
+                setPadding(dp(8), dp(6), dp(8), dp(10))
                 layoutParams = AbsListView.LayoutParams(-1, -2)
             }
-            val title = tv("", 15f, INK, true)
-            val subtitle = tv("", 12f, MUTED)
-            item.addView(title)
-            item.addView(subtitle)
-            val frame = FrameLayout(this@MainActivity).apply { setPadding(0, dp(8), 0, dp(4)) }
             val image = TicketImageView(this@MainActivity).apply {
                 scaleType = ImageView.ScaleType.FIT_XY
-                background = GradientDrawable().apply { setColor(Color.WHITE); setStroke(dp(1), 0xFFD0D0D0.toInt()) }
-                elevation = dp(2).toFloat()
-                maxWidthPx = dp(460)
+                setBackgroundColor(Color.WHITE)
+                elevation = dp(3).toFloat()
             }
             frame.addView(image, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL))
-            item.addView(frame)
-            val events = tv("", 13f, 0xFFE65100.toInt()).apply { setPadding(0, dp(4), 0, 0) }
-            item.addView(events)
-            val buttons = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_HORIZONTAL }
-            val log = flatButton("Comandos") {}
-            val hex = flatButton("Hex") {}
-            val share = flatButton("Compartir") {}
-            buttons.addView(log); buttons.addView(hex); buttons.addView(share)
-            item.addView(buttons)
-            item.tag = Holder(title, subtitle, image, events, log, hex, share)
-            return item
+            frame.tag = Holder(image)
+            return frame
         }
     }
 
     companion object {
         private const val REQ_OPEN = 7
-        private const val BG = 0xFFF1F3F5.toInt()
-        private const val HEADER = 0xFF1F2A30.toInt()
+        private const val BG = 0xFFE4E6E9.toInt()
         private const val INK = 0xFF212529.toInt()
         private const val MUTED = 0xFF6C757D.toInt()
-        private const val ACCENT = 0xFF00796B.toInt()
     }
 }
 
-/** ImageView que ocupa todo el ancho disponible (hasta [maxWidthPx]) manteniendo la proporción del ticket. */
+/** ImageView que ocupa todo el ancho disponible manteniendo la proporción del ticket. */
 class TicketImageView(context: Context) : ImageView(context) {
     var ratio = 1.5f
-    var maxWidthPx = Int.MAX_VALUE
     var paperDots = 576
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val avail = MeasureSpec.getSize(widthMeasureSpec)
         // A 58 mm el ticket es más estrecho, igual que en la vida real.
-        val limit = if (paperDots < 576) (maxWidthPx * 0.72f).toInt() else maxWidthPx
-        val maxByPaper = if (paperDots < 576) (avail * 0.72f).toInt() else avail
-        val w = minOf(maxByPaper, limit).coerceAtLeast(1)
+        val w = (if (paperDots < 576) (avail * 0.72f).toInt() else avail).coerceAtLeast(1)
         setMeasuredDimension(w, (w * ratio).toInt().coerceAtLeast(1))
     }
 }
