@@ -87,6 +87,7 @@ class MainActivity : Activity(), PrinterHub.Listener {
         }
         PrinterHub.init(this)
         setContentView(buildUi())
+        setupSystemBars()
         applyScreenOn()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -275,6 +276,19 @@ class MainActivity : Activity(), PrinterHub.Listener {
         list.emptyView = emptyView
         root.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        rootView = root
+        headerView = header
+        updateServerViews()
+        return root
+    }
+
+    private lateinit var rootView: LinearLayout
+    private lateinit var headerView: LinearLayout
+
+    /** Se llama después de setContentView: antes no existe la DecorView y getInsetsController() falla. */
+    private fun setupSystemBars() {
+        val root = rootView
+        val header = headerView
         // Bordes de pantalla (Android 15 obliga a dibujar bajo las barras del sistema)
         if (Build.VERSION.SDK_INT >= 30) {
             window.setDecorFitsSystemWindows(false)
@@ -292,8 +306,6 @@ class MainActivity : Activity(), PrinterHub.Listener {
             @Suppress("DEPRECATION")
             window.statusBarColor = HEADER
         }
-        updateServerViews()
-        return root
     }
 
     private fun updateServerViews() {
