@@ -57,6 +57,9 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    buildFeatures {
+        buildConfig = true
+    }
     lint {
         abortOnError = false
         checkReleaseBuilds = false

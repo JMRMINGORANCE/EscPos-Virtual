@@ -80,6 +80,11 @@ class MainActivity : Activity(), PrinterHub.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val crash = App.crashFile(this)
+        if (crash.exists()) {
+            showCrash(crash.readText())
+            return
+        }
         PrinterHub.init(this)
         setContentView(buildUi())
         applyScreenOn()
@@ -89,14 +94,51 @@ class MainActivity : Activity(), PrinterHub.Listener {
         if (PrinterHub.prefs.autoStart && !PrinterHub.isRunning) PrinterService.start(this)
     }
 
+    private var crashMode = false
+
+    /** Pantalla mínima (sin nada que pueda volver a fallar) con el error del último cierre. */
+    private fun showCrash(text: String) {
+        crashMode = true
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(48), dp(16), dp(16))
+        }
+        box.addView(tv("La app se cerró inesperadamente. Copia este error y envíaselo a quien te la hizo:", 15f, INK, true))
+        val buttons = LinearLayout(this)
+        buttons.addView(Button(this).apply {
+            this.text = "Copiar error"
+            setOnClickListener {
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("error", text))
+                Toast.makeText(this@MainActivity, "Copiado", Toast.LENGTH_SHORT).show()
+            }
+        })
+        buttons.addView(Button(this).apply {
+            this.text = "Continuar"
+            setOnClickListener {
+                App.crashFile(this@MainActivity).delete()
+                recreate()
+            }
+        })
+        box.addView(buttons)
+        box.addView(TextView(this).apply {
+            this.text = text
+            typeface = Typeface.MONOSPACE
+            textSize = 11f
+            setTextIsSelectable(true)
+        })
+        setContentView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(box) }) })
+    }
+
     override fun onStart() {
         super.onStart()
+        if (crashMode) return
         PrinterHub.listeners.add(this)
         adapter.notifyDataSetChanged()
         main.post(refresher)
     }
 
     override fun onStop() {
+        if (crashMode) { super.onStop(); return }
         PrinterHub.listeners.remove(this)
         main.removeCallbacks(refresher)
         super.onStop()
