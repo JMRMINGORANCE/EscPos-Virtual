@@ -37,7 +37,7 @@ object TicketRenderer {
 
         for (item in t.items) {
             when (item) {
-                is TextItem -> drawText(c, item, text, fill, glyphH, -fm.ascent)
+                is TextItem -> drawText(c, item, text, glyphH, -fm.ascent)
                 is ImageItem -> drawImage(c, item)
                 is NoteItem -> drawNote(c, item)
             }

@@ -47,7 +47,7 @@ jobs:
           set -o pipefail
           if ! gradle --no-daemon testReleaseUnitTest assembleRelease 2>&1 | tee build.log; then
             # Los errores se publican como anotaciones para poder leerlos sin descargar el log.
-            grep -E "^e: |error:|What went wrong|^> |FAILED|Exception|ERROR" build.log | grep -v "^\s*at " | head -60 > errors.txt || true
+            grep -E "^e: |error:|What went wrong|FAILED|Exception|ERROR" build.log | grep -v "^\s*at \|> Task" | head -60 > errors.txt || true
             split -l 6 errors.txt part_
             for f in part_*; do msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' "$f"); echo "::error::$msg"; done
             exit 1
