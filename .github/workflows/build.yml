@@ -1,0 +1,68 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: Clave de firma propia (opcional)
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Usando la clave de los secretos del repositorio"
+          else
+            echo "Sin secretos de firma: se usa app/debug.keystore"
+          fi
+
+      - name: Tests y compilación
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: gradle --no-daemon --stacktrace testReleaseUnitTest assembleRelease
+
+      - name: Preparar APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/EscPos-Virtual-$VERSION_NAME.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EscPos-Virtual-${{ env.VERSION_NAME }}
+          path: dist/*.apk
+
+      - name: Publicar release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_NAME }}
+          name: Impresora ESC/POS Virtual ${{ env.VERSION_NAME }}
+          body: |
+            APK compilado automáticamente desde ${{ github.sha }}.
+            Descarga `EscPos-Virtual-${{ env.VERSION_NAME }}.apk` e instálalo en el móvil.
+          files: dist/*.apk
+          make_latest: true

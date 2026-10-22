@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Impresora ESC/POS Virtual</string>
+    <string name="channel_name">Servidor de impresión</string>
+    <string name="notif_listening">Escuchando en %1$s:%2$d · %3$d tickets</string>
+    <string name="notif_error">Puerto %1$d no disponible: %2$s</string>
+    <string name="stop">Detener</string>
+</resources>

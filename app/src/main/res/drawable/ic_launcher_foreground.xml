@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Papel saliendo de la impresora -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M38,32 l4,-4 l4,4 l4,-4 l4,4 l4,-4 l4,4 l4,-4 l4,4 V56 H38 Z" />
+    <path android:fillColor="#00796B" android:pathData="M42,37 h24 v3 h-24 Z" />
+    <path android:fillColor="#00796B" android:pathData="M42,44 h16 v3 h-16 Z" />
+    <path android:fillColor="#00796B" android:pathData="M60,44 h6 v3 h-6 Z" />
+    <!-- Cuerpo -->
+    <path android:fillColor="#ECEFF1"
+        android:pathData="M31,50 h46 a5,5 0 0 1 5,5 v17 a5,5 0 0 1 -5,5 h-46 a5,5 0 0 1 -5,-5 v-17 a5,5 0 0 1 5,-5 Z" />
+    <path android:fillColor="#1F2A30" android:pathData="M35,56 h38 v3 h-38 Z" />
+    <path android:fillColor="#FFC107" android:pathData="M72,69 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0" />
+</vector>
